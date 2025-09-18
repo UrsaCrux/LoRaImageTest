@@ -27,17 +27,28 @@ class Packet:
 
     Methods
     -------
-    """
-    def __init__(self):
-        self.data = None
-        self.type = None
-        self.crcpass = False
-        self.timestamp = None
-        pass
 
-    def __str__(self):
+    """
+    def __init__(self, verbose:bool = False):
+        self.type = None
+        self.timestamp = None
+        self.data = None
+        self.crcpass = False
+        if verbose:
+            if not self.crcpass:
+                print(f"Packet of type {self.type} at {self.timestamp} failed CRC.")
+        raise NotImplementedError("Packet class must be done")
+
+    def asjson(self)->dict:
+        """Returns a dictionary containing all the packet information to save in a json file."""
+        return {"Type": self.type, "Timestamp": self.timestamp, "Data": self.data, "CRCPass": self.crcpass}
+
+    def __str__(self)->str:
         return f"""Packet object with:
-        Packet type: {self.type}
+        Type: {self.type}
+        Timestamp: {self.timestamp}
+        Data: {self.data}
+        CRCPass: {self.crcpass}
         """
 
 class Transfer:
@@ -66,6 +77,7 @@ class Transfer:
             self.rts = rts
             self.channel.dtr = dtr
             self.channel.rts = rts
+            self.timeout = timeout
 
             # Initial device info retrieval
             print(f"Connected to {port} at {baudrate} baud.")
@@ -158,4 +170,4 @@ class Transfer:
         """
         while line := self.channel.readline():
             yield line
-        print("Reception ended. No data received after timeout of", self.channel.timeout, "seconds.")
+        print("Reception ended. No data received after timeout of", self.timeout, "seconds.")
