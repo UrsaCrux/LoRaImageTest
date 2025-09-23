@@ -3,24 +3,38 @@ import serial.tools.list_ports
 
 from typing import Generator
 
+HEAD = b"\x14"
+IMAGE_TYPE = b"\x00"
+
+TYPES_PAYLOAD = {
+    IMAGE_TYPE: 48,
+}
+
+def save_packets(filename:str, packets:list):
+    """Saves a list of packets to a file in JSON format."""
+    import json
+
+    with open(filename, "w") as f:
+        json.dump([packet.asjson() for packet in packets], f)
+
 class Packet:
     """Handles packet data using the PHUC Protocol.
     
     Header
     ------
-    1 byte: Magic Num ()
+    1 byte: Magic Num (0x69)
     1 byte: Packet type
 
     Body
     ----
     4 bytes: timestamp
-    Up to 16 bytes: data
+    Up to 48 bytes: data
 
     Tail
     ----
     2 bytes: CRC data
     
-    Packet size (8 -> 24) inclusive
+    Packet size (8 -> 56) inclusive
 
     Parameters
     ----------
@@ -29,29 +43,51 @@ class Packet:
     -------
 
     """
-    def __init__(self, verbose:bool = False):
-        self.type = None
-        self.timestamp = None
-        self.data = None
-        self.crcpass = False
+    def __init__(self, head:bytes, type:bytes, timestamp:bytes, data:bytes, crc:bytes, verbose:bool = False):
+        self.head = head
+        self.type = type
+        self.timestamp = timestamp
+        self.data = data
+        self.crc = crc
+        self.crcpass = self.crc_check(self.head + self.type + self.timestamp + self.data)
+        self.full = self.head + self.type + self.timestamp + self.data + self.crc
+
         if verbose:
             if not self.crcpass:
                 print(f"Packet of type {self.type} at {self.timestamp} failed CRC.")
-        raise NotImplementedError("Packet class must be done")
+        #raise NotImplementedError("Packet class must be done")
 
     def asjson(self)->dict:
         """Returns a dictionary containing all the packet information to save in a json file."""
         return {"Type": self.type, "Timestamp": self.timestamp, "Data": self.data, "CRCPass": self.crcpass}
 
+    @staticmethod
+    def crc_check(data: bytes) -> bool:
+        """Checks if the CRC is correct."""
+        crc = 0xFFFF
+        for b in data:
+            crc ^= b << 8
+            for _ in range(8):
+                if crc & 0x8000:
+                    crc = (crc << 1) ^ 0x1021
+                else:
+                    crc <<= 1
+                crc &= 0xFFFF
+        
+        if crc.to_bytes(2, 'big') == data[-2:]:
+            return True
+        return False
+
     def __str__(self)->str:
         return f"""Packet object with:
-        Type: {self.type}
-        Timestamp: {self.timestamp}
-        Data: {self.data}
+        Type: {self.type.hex(" ")}
+        Timestamp: {self.timestamp.hex(" ")}
+        Data: {self.data.hex(" ")}
         CRCPass: {self.crcpass}
         """
 
 class Transfer:
+
     """
     Handles data transfer over serial communication.
 
@@ -171,3 +207,49 @@ class Transfer:
         while line := self.channel.readline():
             yield line
         print("Reception ended. No data received after timeout of", self.timeout, "seconds.")
+
+    def send_packet(self, packet: Packet) -> int:
+        """
+        Sends a packet over the serial channel.
+
+        Parameters
+        ----------
+        packet : bytes
+            Packet data to send.
+
+        Returns
+        -------
+        int
+            Number of bytes written.
+        """
+
+        return self.channel.write(packet.head + packet.type + packet.timestamp + packet.data + packet.crc)
+
+    def receive_packets(self):
+        """
+        Receives packets continuously from the serial channel until timeout.
+
+        Yields
+        ------
+        Packet
+            Each packet received, parsed into a Packet object.
+        """
+        while True:
+            while self.getbyte() != HEAD:
+                continue
+            
+            # Packet parsing logic to be implemented
+            packet_byte = self.getbyte()
+            if not packet_byte in TYPES_PAYLOAD:
+                print(f"Unknown packet type: {packet_byte}")
+                continue
+
+            length = TYPES_PAYLOAD[packet_byte]
+            timestamp = self.getbytes(4)
+
+            data = self.getbytes(length)
+            crc = self.getbytes(2)
+
+            # Create and yield the packet
+            packet = Packet(HEAD, packet_byte, timestamp, data, crc)
+            yield packet
